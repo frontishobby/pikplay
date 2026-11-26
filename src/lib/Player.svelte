@@ -85,10 +85,18 @@
   const shownTime = $derived(scrubbing && hoverRatio !== null ? hoverRatio * duration : time)
   const canPip = typeof document !== 'undefined' && document.pictureInPictureEnabled
 
+  /**
+   * PikPak hands out stream links as http://, which an https page may not load.
+   * The same hosts answer https, and the playlist service echoes whichever it is given.
+   */
+  function secure(url: string): string {
+    return url.replace(/^http:\/\//, 'https://')
+  }
+
   function collectSources(detail: DriveFile): Source[] {
     const medias = detail.medias ?? []
     const original = medias.find((media) => media.is_origin)
-    const originalUrl = detail.web_content_link || original?.link?.url
+    const originalUrl = secure(detail.web_content_link || original?.link?.url || '')
     const originalPlays = !NOT_NATIVE.test(original?.video?.video_type ?? '')
 
     const found: Source[] = []
@@ -98,9 +106,10 @@
       const label = media.media_name || `${media.video?.height ?? '?'}p`
       if (found.some((source) => source.label === label)) continue
       const isTs = media.video?.video_type === 'mpegts'
+      const link = secure(media.link.url)
       found.push({
         label,
-        url: isTs ? TS_PLAYLIST_URL + encodeURIComponent(media.link.url) : media.link.url,
+        url: isTs ? TS_PLAYLIST_URL + encodeURIComponent(link) : link,
         kind: isTs ? 'hls' : 'file',
         preferred: !originalPlays && media.is_default === true,
       })
