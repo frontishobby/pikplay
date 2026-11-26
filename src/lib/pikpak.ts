@@ -1,30 +1,22 @@
 // Unofficial PikPak drive client for the browser, authenticated with a
 // Personal Access Token (Account & Security → Connected Apps).
-
-const PROXY_BASE: string = import.meta.env.VITE_CORS_PROXY ?? 'http://127.0.0.1:8787/'
-const PROXY_AUTH: string | undefined = import.meta.env.VITE_CORS_PROXY_AUTH
+//
+// PikPak answers CORS requests only from its own site, so every call goes through
+// a relay the user runs (supabase/functions/pikplay): `<relay>?url=<target>`.
 
 const DRIVE_API = 'https://api-drive.mypikpak.com'
 const CLIENT_ID = 'YUMx5nI8ZU8Ap8pm'
 
 const STORAGE_KEY = 'pikplay.session'
 
-/** Rewrites a URL so the request goes through the CORS relay. */
-export function proxied(url: string): string {
-  return PROXY_BASE + url
-}
-
-/** Headers the relay needs on top of the request's own; `origin` is what upstream should see. */
-export function proxyHeaders(origin?: string): Record<string, string> {
-  const headers: Record<string, string> = {}
-  if (PROXY_AUTH) headers['x-proxy-auth'] = PROXY_AUTH
-  if (origin) headers['x-proxy-header-origin'] = origin
-  return headers
-}
+/** Pre-filled relay address: the dev server's local relay, or nothing in a deployed build. */
+export const DEFAULT_RELAY: string =
+  import.meta.env.VITE_RELAY_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8787/' : '')
 
 interface Session {
   deviceId: string
   token: string
+  relay: string
 }
 
 export interface MediaVariant {
@@ -81,10 +73,14 @@ function randomDeviceId(): string {
 function loadSession(): Session {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<Session>
-    return { deviceId: saved.deviceId || randomDeviceId(), token: saved.token ?? '' }
+    return {
+      deviceId: saved.deviceId || randomDeviceId(),
+      token: saved.token ?? '',
+      relay: saved.relay || DEFAULT_RELAY,
+    }
   } catch {
     // Unreadable storage just means starting logged out.
-    return { deviceId: randomDeviceId(), token: '' }
+    return { deviceId: randomDeviceId(), token: '', relay: DEFAULT_RELAY }
   }
 }
 
@@ -92,21 +88,33 @@ export class PikPak {
   private session: Session = loadSession()
 
   get loggedIn(): boolean {
-    return this.session.token !== ''
+    return this.session.token !== '' && this.session.relay !== ''
+  }
+
+  /** The relay address in use, for pre-filling the login form. */
+  get relay(): string {
+    return this.session.relay
   }
 
   private save(): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.session))
   }
 
-  /** Stores the token only once a real API call has accepted it. */
-  async login(token: string): Promise<void> {
-    const previous = this.session.token
+  /** Stores the relay and token only once a real API call through them has succeeded. */
+  async login(relay: string, token: string): Promise<void> {
+    let parsed: URL
+    try {
+      parsed = new URL(relay)
+    } catch {
+      throw new PikPakError('릴레이 주소가 올바른 URL이 아닙니다.', 0)
+    }
+    const previous = { ...this.session }
+    this.session.relay = parsed.href
     this.session.token = token
     try {
-      await this.request('GET', '/drive/v1/files', { parent_id: '', limit: '1' })
+      await this.request('/drive/v1/files', { parent_id: '', limit: '1' })
     } catch (err) {
-      this.session.token = previous
+      this.session = previous
       throw err
     }
     this.save()
@@ -117,18 +125,35 @@ export class PikPak {
     this.save()
   }
 
-  private async request<T>(method: string, path: string, query: Record<string, string> = {}): Promise<T> {
+  /** Address that fetches `url` through the relay. */
+  relayed(url: string): string {
+    const address = new URL(this.session.relay)
+    address.searchParams.set('url', url)
+    return address.href
+  }
+
+  /** Whether `url` is a request to the relay, as opposed to one straight to a CDN. */
+  isRelayed(url: string): boolean {
+    return url.startsWith(this.session.relay.split('?')[0])
+  }
+
+  /** The relay accepts a request only when it carries the token it was set up with. */
+  relayHeaders(): Record<string, string> {
+    return { authorization: `Bearer ${this.session.token}` }
+  }
+
+  private async request<T>(path: string, query: Record<string, string> = {}): Promise<T> {
     const target = new URL(DRIVE_API + path)
     for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value)
 
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${this.session.token}`,
-      'x-device-id': this.session.deviceId,
-      'x-client-id': CLIENT_ID,
+    let response: Response
+    try {
+      response = await fetch(this.relayed(target.href), {
+        headers: { ...this.relayHeaders(), 'x-device-id': this.session.deviceId, 'x-client-id': CLIENT_ID },
+      })
+    } catch {
+      throw new PikPakError('릴레이에 연결하지 못했습니다. 주소를 확인하세요.', 0)
     }
-    Object.assign(headers, proxyHeaders())
-
-    const response = await fetch(proxied(target.href), { method, headers })
     const data = await response.json().catch(() => ({}))
     const code: number = data.error_code ?? 0
     if (response.ok && code === 0) return data as T
@@ -140,7 +165,7 @@ export class PikPak {
     const files: DriveFile[] = []
     let pageToken = ''
     do {
-      const page = await this.request<{ files: DriveFile[]; next_page_token?: string }>('GET', '/drive/v1/files', {
+      const page = await this.request<{ files: DriveFile[]; next_page_token?: string }>('/drive/v1/files', {
         parent_id: parentId,
         thumbnail_size: 'SIZE_LARGE',
         with_audit: 'true',
@@ -156,7 +181,7 @@ export class PikPak {
 
   /** Fetches one file with fresh, short-lived download and streaming links. */
   async detail(fileId: string): Promise<DriveFile> {
-    return this.request<DriveFile>('GET', `/drive/v1/files/${fileId}`, {
+    return this.request<DriveFile>(`/drive/v1/files/${fileId}`, {
       _magic: '2021',
       usage: 'CACHE',
       thumbnail_size: 'SIZE_LARGE',

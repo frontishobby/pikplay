@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { PikPak } from './pikpak'
 
   let { client, onLogin }: { client: PikPak; onLogin: () => void } = $props()
 
+  let relay = $state(untrack(() => client.relay))
   let token = $state('')
   let busy = $state(false)
   let error = $state('')
@@ -12,7 +14,7 @@
     busy = true
     error = ''
     try {
-      await client.login(token.trim())
+      await client.login(relay.trim(), token.trim())
       onLogin()
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
@@ -26,10 +28,18 @@
   <form onsubmit={submit}>
     <h1>pikplay</h1>
 
-    <p class="muted guide">
-      <a href="https://mypikpak.com/drive/auth-center" target="_blank" rel="noreferrer">PikPak 계정 설정</a>의
-      Account &amp; Security → Connected Apps → Personal Access Tokens에서 발급. 권한은 Read files면 충분합니다.
-    </p>
+    <label>
+      <span>릴레이 주소 (Supabase Edge Function)</span>
+      <input
+        bind:value={relay}
+        type="url"
+        placeholder="https://<project>.supabase.co/functions/v1/pikplay"
+        autocomplete="url"
+        required
+        disabled={busy}
+        spellcheck="false"
+      />
+    </label>
 
     <label>
       <span>Personal Access Token</span>
@@ -45,7 +55,9 @@
     {/if}
 
     <p class="muted note">
-      토큰은 로컬 프록시(127.0.0.1:8787)를 거쳐 PikPak으로만 전송되고, 이 브라우저의 localStorage에 저장됩니다.
+      토큰은 <a href="https://mypikpak.com/drive/auth-center" target="_blank" rel="noreferrer">PikPak 계정 설정</a>의
+      Connected Apps → Personal Access Tokens에서 발급합니다(Read files 권한이면 충분). 릴레이는 여기 넣은 토큰이 자신에게
+      등록된 토큰과 같을 때만 요청을 받아줍니다. 주소와 토큰은 이 브라우저의 localStorage에만 저장됩니다.
     </p>
   </form>
 </main>
@@ -98,10 +110,6 @@
   input:focus {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
-  }
-
-  .guide {
-    font-size: 0.88rem;
   }
 
   .note {

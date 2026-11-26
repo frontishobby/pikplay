@@ -1,0 +1,4 @@
+project_id = "pikplay"
+
+[functions.pikplay]
+verify_jwt = false

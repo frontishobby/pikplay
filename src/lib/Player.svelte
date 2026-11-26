@@ -3,7 +3,7 @@
   import Icon from './Icon.svelte'
   import { formatDate, formatSize, formatTime } from './format'
   import { durationOf, getFolder, isPlayable, sortFiles } from './library'
-  import { proxied, proxyHeaders, type DriveFile, type PikPak } from './pikpak'
+  import type { DriveFile, PikPak } from './pikpak'
   import { folderHref, navigate, watchHref } from './router.svelte'
   import { isFinished, prefs, recordProgress, watch, watchedFraction } from './store.svelte'
 
@@ -20,7 +20,6 @@
   // This service (the one the official web player uses) returns an HLS playlist of
   // byte ranges into that file.
   const TS_PLAYLIST_URL = 'https://web-vod-xdrive.mypikpak.com/ts_downloader?client_id=UElLUEFLX1dFQg&url='
-  const PIKPAK_WEB_ORIGIN = 'https://mypikpak.com'
   /** Containers a <video> element can't open, as named in `video_type`. */
   const NOT_NATIVE = /mpegts|avi|flv|asf|rm|mpeg\b/
 
@@ -511,9 +510,9 @@
         backBufferLength: 30,
         // Only the playlist goes through the relay; segments come straight from the CDN.
         xhrSetup(xhr, url) {
-          if (!url.startsWith(proxied(''))) return
+          if (!client.isRelayed(url)) return
           xhr.open('GET', url, true)
-          for (const [name, value] of Object.entries(proxyHeaders(PIKPAK_WEB_ORIGIN))) xhr.setRequestHeader(name, value)
+          for (const [name, value] of Object.entries(client.relayHeaders())) xhr.setRequestHeader(name, value)
         },
       })
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -522,7 +521,7 @@
         hls.destroy()
         onError()
       })
-      hls.loadSource(proxied(source.url))
+      hls.loadSource(client.relayed(source.url))
       hls.attachMedia(element)
       detach = () => hls.destroy()
     })

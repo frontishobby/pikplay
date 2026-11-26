@@ -6,9 +6,9 @@ import { startProxy } from './proxy/server.mjs'
 const PROXY_PORT = 8787
 
 /**
- * Runs the local CORS relay alongside `vite dev`. Vite re-evaluates this file on
- * every config restart, so the relay lives on globalThis and is started once per
- * process rather than once per restart.
+ * Runs the local relay (the same code as the Supabase Edge Function) alongside
+ * `vite dev`. Vite re-evaluates this file on every config restart, so the relay
+ * lives on globalThis and is started once per process rather than once per restart.
  */
 function localCorsProxy(): Plugin {
   return {
