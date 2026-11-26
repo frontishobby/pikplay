@@ -54,6 +54,7 @@
             fraction={watchedFraction(entry)}
             meta="{formatTime(entry.position)} / {formatTime(entry.duration)}"
             onRemove={() => forgetProgress(entry.id)}
+            removeLabel="시청 기록에서 삭제"
           />
         </div>
       {/each}

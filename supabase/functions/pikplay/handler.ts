@@ -4,6 +4,8 @@
 //
 //   GET <relay>?url=<encoded https URL>   with   Authorization: Bearer <PAT>
 //
+// Reads only, plus the few POST endpoints listed per upstream below.
+//
 // It is not an open proxy: the bearer token must equal the one PikPak Personal
 // Access Token it was configured with, and only the hosts below are reachable.
 // Nothing about a request is logged.
@@ -13,10 +15,13 @@ interface Upstream {
   forwardAuth: boolean
   /** Origin header to present, for services that only answer PikPak's own site. */
   origin?: string
+  /** Paths that may be POSTed to; everything else is GET only. */
+  postPaths?: string[]
 }
 
 const UPSTREAMS: Record<string, Upstream> = {
-  'api-drive.mypikpak.com': { forwardAuth: true },
+  // batchTrash moves files to PikPak's trash, where they can still be restored.
+  'api-drive.mypikpak.com': { forwardAuth: true, postPaths: ['/drive/v1/files:batchTrash'] },
   // Turns a transcoded stream into an HLS playlist; takes no credentials.
   'web-vod-xdrive.mypikpak.com': { forwardAuth: false, origin: 'https://mypikpak.com' },
 }
@@ -25,8 +30,8 @@ const FORWARDED_HEADERS = ['accept', 'accept-language', 'user-agent', 'x-device-
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, OPTIONS',
-  'access-control-allow-headers': 'authorization, x-device-id, x-client-id',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, content-type, x-device-id, x-client-id',
   'access-control-max-age': '86400',
 }
 
@@ -58,7 +63,9 @@ async function sameSecret(a: string, b: string): Promise<boolean> {
 export function createRelay(options: RelayOptions): (request: Request) => Promise<Response> {
   return async (request) => {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS })
-    if (request.method !== 'GET') return fail(405, 'method_not_allowed', 'Only GET is relayed.')
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      return fail(405, 'method_not_allowed', 'Only GET and a few POST calls are relayed.')
+    }
 
     if (options.token === '') return fail(500, 'relay_misconfigured', 'PIKPAK_PAT is not set on the relay.')
     const authorization = request.headers.get('authorization') ?? ''
@@ -75,6 +82,10 @@ export function createRelay(options: RelayOptions): (request: Request) => Promis
     }
     const upstream = target.protocol === 'https:' ? UPSTREAMS[target.hostname] : undefined
     if (!upstream) return fail(403, 'host_not_allowed', `${target.hostname} is not relayed.`)
+    const isPost = request.method === 'POST'
+    if (isPost && !upstream.postPaths?.includes(target.pathname)) {
+      return fail(405, 'method_not_allowed', 'This call is read-only through the relay.')
+    }
 
     const headers = new Headers()
     for (const name of FORWARDED_HEADERS) {
@@ -83,10 +94,11 @@ export function createRelay(options: RelayOptions): (request: Request) => Promis
     }
     if (upstream.forwardAuth && authorization) headers.set('authorization', authorization)
     if (upstream.origin) headers.set('origin', upstream.origin)
+    if (isPost) headers.set('content-type', 'application/json')
 
     let response: Response
     try {
-      response = await fetch(target, { headers })
+      response = await fetch(target, { method: request.method, headers, body: isPost ? await request.text() : undefined })
     } catch {
       return fail(502, 'upstream_failed', 'PikPak did not answer.')
     }

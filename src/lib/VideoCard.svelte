@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from './Icon.svelte'
+  import Icon, { type IconName } from './Icon.svelte'
   import { formatTime } from './format'
 
   interface Props {
@@ -11,11 +11,24 @@
     fraction?: number
     finished?: boolean
     meta?: string
+    /** Shows a corner button; what it removes is up to the caller. */
     onRemove?: () => void
+    removeLabel?: string
+    removeIcon?: IconName
   }
 
-  let { href, name, thumbnail = '', duration = 0, fraction = 0, finished = false, meta = '', onRemove }: Props =
-    $props()
+  let {
+    href,
+    name,
+    thumbnail = '',
+    duration = 0,
+    fraction = 0,
+    finished = false,
+    meta = '',
+    onRemove,
+    removeLabel = '삭제',
+    removeIcon = 'close',
+  }: Props = $props()
 
   let broken = $state(false)
 
@@ -49,8 +62,8 @@
     {/if}
   </a>
   {#if onRemove}
-    <button class="remove" onclick={onRemove} aria-label="시청 기록에서 삭제" title="시청 기록에서 삭제">
-      <Icon name="close" size={16} />
+    <button class="remove" onclick={onRemove} aria-label={removeLabel} title={removeLabel}>
+      <Icon name={removeIcon} size={16} />
     </button>
   {/if}
 </article>
@@ -149,7 +162,7 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    padding: 4px;
+    padding: 6px;
     border: none;
     border-radius: 50%;
     background: rgb(0 0 0 / 0.7);

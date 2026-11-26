@@ -9,19 +9,25 @@ import { Readable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import { createRelay } from '../supabase/functions/pikplay/handler.ts'
 
-function toRequest(req) {
+async function toRequest(req) {
   const headers = new Headers()
   for (const [name, value] of Object.entries(req.headers)) {
     if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value)
   }
-  return new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers })
+  let body
+  if (req.method === 'POST') {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    body = Buffer.concat(chunks)
+  }
+  return new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers, body })
 }
 
 export function startProxy(port = 8787) {
   const relay = createRelay({ token: process.env.PIKPAK_PAT ?? null })
   const server = http.createServer(async (req, res) => {
     try {
-      const response = await relay(toRequest(req))
+      const response = await relay(await toRequest(req))
       res.writeHead(response.status, Object.fromEntries(response.headers))
       if (response.body) Readable.fromWeb(response.body).pipe(res)
       else res.end()

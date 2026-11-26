@@ -2,10 +2,10 @@
   import { onDestroy, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import { formatDate, formatSize, formatTime } from './format'
-  import { durationOf, getFolder, isPlayable, sortFiles } from './library'
+  import { durationOf, getFolder, isPlayable, removeFromFolder, sortFiles } from './library'
   import type { DriveFile, PikPak } from './pikpak'
   import { folderHref, navigate, watchHref } from './router.svelte'
-  import { isFinished, prefs, recordProgress, watch, watchedFraction } from './store.svelte'
+  import { forgetProgress, isFinished, prefs, recordProgress, watch, watchedFraction } from './store.svelte'
 
   interface Source {
     label: string
@@ -90,7 +90,8 @@
    * The same hosts answer https, and the playlist service echoes whichever it is given.
    */
   function secure(url: string): string {
-    return url.replace(/^http:\/\//, 'https://')
+    // Loopback is exempt: a local stand-in server has no certificate, and browsers allow it anyway.
+    return url.replace(/^http:\/\/(?!127\.0\.0\.1|localhost)/, 'https://')
   }
 
   function collectSources(detail: DriveFile): Source[] {
@@ -324,6 +325,26 @@
 
   function open(target: DriveFile | null) {
     if (target) navigate(watchHref(playlistFolderId, target.id), true)
+  }
+
+  /** Trashes the current video, then moves on to the next one or back to the folder. */
+  async function trashCurrent() {
+    const target = file
+    if (!target || !confirm(`이 영상을 PikPak 휴지통으로 옮길까요?\n\n${target.name}`)) return
+    const after = nextFile ?? prevFile
+    try {
+      await client.trash([target.id])
+    } catch (err) {
+      alert(`삭제하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    // Nothing of it may be written back: with no current file, progress saving is a no-op.
+    file = null
+    forgetProgress(target.id)
+    removeFromFolder(playlistFolderId, target.id)
+    siblings = siblings.filter((item) => item.id !== target.id)
+    if (after) open(after)
+    else navigate(folderHref(playlistFolderId), true)
   }
 
   function startCountdown() {
@@ -738,6 +759,9 @@
           {[formatSize(file.size), formatDate(file.modified_time), sources[sourceIndex]?.label].filter(Boolean).join(' · ')}
         </p>
       {/if}
+      {#if file}
+        <button class="danger" onclick={trashCurrent}><Icon name="trash" size={16} />휴지통으로 이동</button>
+      {/if}
       <details>
         <summary>단축키</summary>
         <dl>
@@ -1100,6 +1124,16 @@
 
   .info p {
     margin: 0 0 12px;
+    font-size: 0.88rem;
+  }
+
+  .danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding: 6px 12px;
+    color: var(--danger);
     font-size: 0.88rem;
   }
 

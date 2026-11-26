@@ -46,6 +46,12 @@ export function getFolder(client: PikPak, folderId: string, force = false): Prom
   return files
 }
 
+/** Drops one entry from a cached listing, e.g. after it was moved to the trash. */
+export function removeFromFolder(folderId: string, fileId: string): void {
+  const hit = cache.get(folderId)
+  if (hit) cache.set(folderId, { at: hit.at, files: hit.files.then((files) => files.filter((file) => file.id !== fileId)) })
+}
+
 export function clearFolderCache(): void {
   cache.clear()
 }

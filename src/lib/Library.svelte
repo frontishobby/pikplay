@@ -9,10 +9,10 @@
   import Icon from './Icon.svelte'
   import VideoCard from './VideoCard.svelte'
   import { formatDate, formatSize, formatTime } from './format'
-  import { durationOf, getFolder, isFolder, isPlayable, sortFiles } from './library'
+  import { durationOf, getFolder, isFolder, isPlayable, removeFromFolder, sortFiles } from './library'
   import type { DriveFile, PikPak } from './pikpak'
   import { folderHref, navigate, watchHref } from './router.svelte'
-  import { isFinished, knownFolder, prefs, rememberFolders, watch, watchedFraction } from './store.svelte'
+  import { forgetProgress, isFinished, knownFolder, prefs, rememberFolders, watch, watchedFraction } from './store.svelte'
 
   interface Crumb {
     id: string
@@ -76,6 +76,19 @@
       cursor = info.parentId
     }
     if (id === folderId) crumbs = [ROOT, ...chain]
+  }
+
+  async function trash(file: DriveFile) {
+    if (!confirm(`이 영상을 PikPak 휴지통으로 옮길까요?\n\n${file.name}`)) return
+    try {
+      await client.trash([file.id])
+    } catch (err) {
+      alert(`삭제하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    removeFromFolder(folderId, file.id)
+    forgetProgress(file.id)
+    files = files.filter((item) => item.id !== file.id)
   }
 
   function playRandom() {
@@ -187,6 +200,9 @@
             fraction={watchedFraction(entry)}
             finished={entry ? isFinished(entry) : false}
             meta={cardMeta(file)}
+            onRemove={() => trash(file)}
+            removeLabel="휴지통으로 이동"
+            removeIcon="trash"
           />
         {/each}
       </div>
@@ -207,6 +223,9 @@
                 <span class="row-bar" style:width="{watchedFraction(entry) * 100}%"></span>
               {/if}
             </a>
+            <button class="icon-btn" onclick={() => trash(file)} aria-label="휴지통으로 이동" title="휴지통으로 이동">
+              <Icon name="trash" size={18} />
+            </button>
           </li>
         {/each}
       </ul>
@@ -323,19 +342,26 @@
     gap: 22px 16px;
   }
 
+  .rows li {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .rows li:hover {
+    background: var(--panel);
+  }
+
   .rows a {
     position: relative;
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 10px 8px;
-    border-bottom: 1px solid var(--border);
     color: inherit;
     text-decoration: none;
-  }
-
-  .rows a:hover {
-    background: var(--panel);
   }
 
   .row-icon {
@@ -366,7 +392,7 @@
   .row-bar {
     position: absolute;
     left: 0;
-    bottom: -1px;
+    bottom: 0;
     height: 2px;
     background: var(--accent);
   }

@@ -112,7 +112,7 @@ export class PikPak {
     this.session.relay = parsed.href
     this.session.token = token
     try {
-      await this.request('/drive/v1/files', { parent_id: '', limit: '1' })
+      await this.request('GET', '/drive/v1/files', { parent_id: '', limit: '1' })
     } catch (err) {
       this.session = previous
       throw err
@@ -142,14 +142,28 @@ export class PikPak {
     return { authorization: `Bearer ${this.session.token}` }
   }
 
-  private async request<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+  private async request<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    query: Record<string, string> = {},
+    body?: unknown,
+  ): Promise<T> {
     const target = new URL(DRIVE_API + path)
     for (const [key, value] of Object.entries(query)) target.searchParams.set(key, value)
+
+    const headers: Record<string, string> = {
+      ...this.relayHeaders(),
+      'x-device-id': this.session.deviceId,
+      'x-client-id': CLIENT_ID,
+    }
+    if (body !== undefined) headers['content-type'] = 'application/json'
 
     let response: Response
     try {
       response = await fetch(this.relayed(target.href), {
-        headers: { ...this.relayHeaders(), 'x-device-id': this.session.deviceId, 'x-client-id': CLIENT_ID },
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
       })
     } catch {
       throw new PikPakError('릴레이에 연결하지 못했습니다. 주소를 확인하세요.', 0)
@@ -165,7 +179,7 @@ export class PikPak {
     const files: DriveFile[] = []
     let pageToken = ''
     do {
-      const page = await this.request<{ files: DriveFile[]; next_page_token?: string }>('/drive/v1/files', {
+      const page = await this.request<{ files: DriveFile[]; next_page_token?: string }>('GET', '/drive/v1/files', {
         parent_id: parentId,
         thumbnail_size: 'SIZE_LARGE',
         with_audit: 'true',
@@ -181,10 +195,15 @@ export class PikPak {
 
   /** Fetches one file with fresh, short-lived download and streaming links. */
   async detail(fileId: string): Promise<DriveFile> {
-    return this.request<DriveFile>(`/drive/v1/files/${fileId}`, {
+    return this.request<DriveFile>('GET', `/drive/v1/files/${fileId}`, {
       _magic: '2021',
       usage: 'CACHE',
       thumbnail_size: 'SIZE_LARGE',
     })
+  }
+
+  /** Moves files to PikPak's trash. They stay restorable there until PikPak purges them. */
+  async trash(fileIds: string[]): Promise<void> {
+    await this.request('POST', '/drive/v1/files:batchTrash', {}, { ids: fileIds })
   }
 }
